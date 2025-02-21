@@ -23,10 +23,10 @@ export class MarketMaker {
      */
     constructor() {
         // Read decimals from the token mint addresses
-        this.mcbToken = { address: MBC_MINT_ADDRESS, symbol: 'MBC', decimals: 9 };
+        this.mcbToken = { address: MBC_MINT_ADDRESS, symbol: 'USDT', decimals: 6 };
         this.solToken = { address: SOL_MINT_ADDRESS, symbol: 'SOL', decimals: 9 };
         this.usdcToken = { address: USDC_MINT_ADDRESS, symbol: 'USDC', decimals: 6 };
-        this.waitTime = 60000; // 1 minute
+        this.waitTime = 60000 * 60; // 1 heure
         this.slippageBps = 50; // 0.5%
         this.priceTolerance = 0.02; // 2%
         this.rebalancePercentage = 0.5; // 50%
