@@ -26,7 +26,7 @@ export class MarketMaker {
         this.mcbToken = { address: MBC_MINT_ADDRESS, symbol: 'USDT', decimals: 6 };
         this.solToken = { address: SOL_MINT_ADDRESS, symbol: 'SOL', decimals: 9 };
         this.usdcToken = { address: USDC_MINT_ADDRESS, symbol: 'USDC', decimals: 6 };
-        this.waitTime = 60000 * 60 * 3; // 3 heures
+        this.waitTime = 60000 * 60 * 12; // 12 heures
         this.slippageBps = 50; // 0.5%
         this.priceTolerance = 0.02; // 2%
         this.rebalancePercentage = 0.5; // 50%

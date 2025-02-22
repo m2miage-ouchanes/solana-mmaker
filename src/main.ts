@@ -14,6 +14,11 @@ app.use(express.json());
 async function main() {
     dotenv.config();
 
+    // Démarrer le serveur
+    app.listen(port, () => {
+        console.log(`Server is running on http://localhost:${port}`);
+    });
+
     if (!process.env.SOLANA_RPC_ENDPOINT) {
         throw new Error('SOLANA_RPC_ENDPOINT is not set');
     }
