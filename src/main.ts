@@ -3,6 +3,13 @@ import { JupiterClient } from './api/jupiter';
 import { setupSolanaConnection } from './api/solana';
 import { MarketMaker } from './strategies/basicMM';
 import { loadKeypair } from './wallet';
+import express, { Application } from 'express';
+
+const app: Application = express();
+const port = 3001; // Vous pouvez changer ce port si nécessaire
+
+// Middleware pour parser le JSON
+app.use(express.json());
 
 async function main() {
     dotenv.config();
