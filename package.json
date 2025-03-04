@@ -9,7 +9,9 @@
     "start:dashboard": "set TSC_COMPILE_ON_ERROR=true && set DISABLE_ESLINT_PLUGIN=true && react-scripts start",
     "start:server": "ts-node src/server.ts",
     "start:all": "concurrently \"npm run start:server\" \"npm run start:bot\" \"npm run start:dashboard\"",
-    "build:dashboard": "react-scripts build"
+    "build:dashboard": "react-scripts build",
+    "build": "npm run build:bot && npm run build:dashboard",
+    "start": "concurrently \"node dist/server.js\" \"node dist/main.js\""
   },
   "keywords": [
     "solana",
