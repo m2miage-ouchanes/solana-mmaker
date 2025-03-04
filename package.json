@@ -10,8 +10,8 @@
     "start:server": "ts-node src/server.ts",
     "start:all": "concurrently \"npm run start:server\" \"npm run start:bot\" \"npm run start:dashboard\"",
     "build:dashboard": "react-scripts build",
-    "build": "npm run build:bot && npm run build:dashboard",
-    "start": "concurrently \"node dist/server.js\" \"node dist/main.js\""
+    "build": "npm run build:dashboard && npm run build:bot",
+    "start": "node dist/main.js"
   },
   "keywords": [
     "solana",

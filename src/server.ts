@@ -2,14 +2,20 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import path from 'path';
 
 const app = express();
 app.use(cors());
 
+// Servir les fichiers statiques du build React
+app.use(express.static(path.join(__dirname, '../build')));
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
-        origin: "http://localhost:3000",
+        origin: process.env.NODE_ENV === 'production'
+            ? true  // Accepter toutes les origines en production
+            : "http://localhost:3000",
         methods: ["GET", "POST"]
     },
     pingTimeout: 60000,
@@ -41,7 +47,12 @@ setInterval(() => {
     console.log(`Connected clients: ${connectedClients}`);
 }, 5000);
 
+// Route pour servir l'application React sur toutes les routes non-API
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../build', 'index.html'));
+});
+
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
-    console.log(`WebSocket server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 }); 
