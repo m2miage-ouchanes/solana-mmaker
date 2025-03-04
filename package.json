@@ -3,34 +3,72 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "start": "node dist/main.js",
-    "dev": "ts-node src/main.ts",
-    "build": "tsc"
+    "start:bot": "ts-node --project tsconfig.bot.json src/main.ts",
+    "dev": "ts-node --project tsconfig.bot.json src/main.ts",
+    "build:bot": "tsc -p tsconfig.bot.json",
+    "start:dashboard": "set TSC_COMPILE_ON_ERROR=true && set DISABLE_ESLINT_PLUGIN=true && react-scripts start",
+    "start:server": "ts-node src/server.ts",
+    "start:all": "concurrently \"npm run start:server\" \"npm run start:bot\" \"npm run start:dashboard\"",
+    "build:dashboard": "react-scripts build"
   },
   "keywords": [
     "solana",
     "trading",
     "bot"
   ],
-  "author": "gianlucamazza",
-  "license": "ISC",
+  "author": "soul",
+  "license": "",
   "dependencies": {
+    "@emotion/react": "^11.11.3",
+    "@emotion/styled": "^11.11.0",
     "@jup-ag/api": "^6.0.11",
     "@jup-ag/core": "^4.0.0-beta.21",
+    "@mui/material": "^5.15.10",
     "@project-serum/anchor": "^0.26.0",
     "@pythnetwork/client": "^2.22.1",
+    "@pythnetwork/price-service-client": "^1.9.0",
     "@solana/spl-token-registry": "^0.2.4574",
     "@solana/web3.js": "^1.90.0",
+    "@types/cors": "^2.8.17",
+    "@types/ws": "^8.5.14",
+    "ajv": "^8.17.1",
+    "ajv-keywords": "^5.1.0",
+    "axios": "^1.8.1",
     "bs58": "^5.0.0",
+    "cors": "^2.8.5",
     "cross-fetch": "^4.0.0",
     "decimal.js": "^10.4.3",
     "dotenv": "^16.4.4",
-    "express": "^4.17.1",
-    "jsbi": "^4.3.0"
+    "express": "^4.21.2",
+    "jsbi": "^4.3.0",
+    "recharts": "^2.15.1",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
+    "ws": "^8.18.1"
   },
   "devDependencies": {
-    "@types/express": "^4.17.13",
+    "@types/decimal.js": "^0.0.32",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.19",
+    "@types/react": "^18.2.57",
+    "@types/react-dom": "^18.2.19",
+    "concurrently": "^8.2.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "^5.0.1",
     "ts-node": "^10.9.2",
-    "typescript": "^5.8.2"
+    "typescript": "^4.9.5"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   }
 }

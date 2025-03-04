@@ -1,0 +1,41 @@
+.dashboard-card {
+    transition: all 0.3s ease;
+}
+
+.dashboard-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.price-up {
+    color: #4caf50;
+}
+
+.price-down {
+    color: #f44336;
+}
+
+.chart-container {
+    margin-top: 20px;
+    margin-bottom: 20px;
+}
+
+.metrics-card {
+    height: 100%;
+}
+
+.balance-value {
+    font-size: 1.2rem;
+    font-weight: 500;
+}
+
+.indicator-value {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.last-trade-time {
+    font-size: 0.9rem;
+    color: rgba(0, 0, 0, 0.6);
+}

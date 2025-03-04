@@ -6,6 +6,7 @@ import { fromNumberToLamports } from '../utils/convert';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { sleep } from '../utils/sleep';
 import { DynamicRebalancer } from './dynamicRebalancer';
+import { marketDataService } from '../services/MarketDataService';
 
 // Constantes de temps en millisecondes
 const DEFAULT_WAIT_TIME = 15 * 60 * 1000;        // 15 minutes
@@ -48,13 +49,21 @@ export class MarketMaker {
     minTradeValueUSD: number
     minPortfolioImbalance: number
     rebalancePercentage: number
-    dynamicRebalancer: DynamicRebalancer
+    dynamicRebalancer!: DynamicRebalancer
+    private solBalance!: ReturnType<typeof Decimal.prototype.constructor>;
+    private usdtBalance!: ReturnType<typeof Decimal.prototype.constructor>;
+    private lastPrice: ReturnType<typeof Decimal.prototype.constructor> | null = null;
+    private config: {
+        emaPeriod?: number;
+        volatilityThreshold?: number;
+        maxSOLExposure?: number;
+    };
 
     /**
      * Initializes a new instance of the MarketMaker class with default properties.
      */
     constructor(
-        connection: Connection,
+        private connection: Connection,
         config: {
             emaPeriod?: number;
             volatilityThreshold?: number;
@@ -79,6 +88,11 @@ export class MarketMaker {
         this.minTradeValueUSD = config.minTradeValueUSD || getMinTradeValueUSD();
         this.minPortfolioImbalance = config.minPortfolioImbalance || MIN_PORTFOLIO_IMBALANCE;
         this.rebalancePercentage = 0.5; // Valeur initiale qui sera mise à jour dynamiquement
+        this.config = {
+            emaPeriod: config.emaPeriod || 20,
+            volatilityThreshold: config.volatilityThreshold || 0.15,
+            maxSOLExposure: config.maxSOLExposure || 0.7
+        };
 
         // Log de la configuration
         console.log('\nConfiguration du Market Maker:');
@@ -87,12 +101,8 @@ export class MarketMaker {
         console.log(`- Écart minimum pour trade: ${(this.minPortfolioImbalance * 100).toFixed(2)}%`);
         console.log(`- Slippage maximum: ${(this.slippageBps / 100).toFixed(2)}%\n`);
 
-        // Initialize dynamic rebalancer with configuration
-        this.dynamicRebalancer = new DynamicRebalancer(connection, {
-            emaPeriod: config.emaPeriod || 20,
-            volatilityThreshold: config.volatilityThreshold || 0.15,
-            maxSOLExposure: config.maxSOLExposure || 0.7
-        });
+        this.solBalance = new Decimal(0);
+        this.usdtBalance = new Decimal(0);
     }
 
     /**
@@ -102,6 +112,13 @@ export class MarketMaker {
      * @returns {Promise<void>} - Promise object
      */
     async runMM(jupiterClient: JupiterClient, enableTrading: Boolean = false): Promise<void> {
+        // Initialize dynamic rebalancer with configuration
+        this.dynamicRebalancer = new DynamicRebalancer(
+            this.connection,
+            jupiterClient.getUserKeypair().publicKey,
+            this.config
+        );
+
         const tradePairs = [{ token0: this.solToken, token1: this.usdtToken }];
         console.log(`Stratégie démarrée avec intervalle de ${this.waitTime / 1000 / 60} minutes entre les évaluations`);
 
@@ -126,6 +143,9 @@ export class MarketMaker {
      **/
     async evaluateAndExecuteTrade(jupiterClient: JupiterClient, pair: any, enableTrading: Boolean): Promise<void> {
         console.log('\n=== Évaluation du Trade ===');
+
+        // Mise à jour des balances
+        await this.updateBalances(jupiterClient);
 
         const token0Balance = await this.fetchTokenBalance(jupiterClient, pair.token0); // SOL balance
         const token1Balance = await this.fetchTokenBalance(jupiterClient, pair.token1); // USDT balance
@@ -176,6 +196,10 @@ export class MarketMaker {
                     console.log('Exécution du trade...');
                     await jupiterClient.executeSwap(swapTransaction);
                     console.log('Trade exécuté avec succès');
+                    // Mettre à jour lastTradeTime uniquement après un trade réussi
+                    marketDataService.emitMarketUpdate({
+                        lastTradeTime: new Date()
+                    });
                 } else {
                     console.log('⚠️ Trading désactivé - Simulation uniquement');
                 }
@@ -192,6 +216,10 @@ export class MarketMaker {
                     console.log('Exécution du trade...');
                     await jupiterClient.executeSwap(swapTransaction);
                     console.log('Trade exécuté avec succès');
+                    // Mettre à jour lastTradeTime uniquement après un trade réussi
+                    marketDataService.emitMarketUpdate({
+                        lastTradeTime: new Date()
+                    });
                 } else {
                     console.log('⚠️ Trading désactivé - Simulation uniquement');
                 }
@@ -201,13 +229,16 @@ export class MarketMaker {
         }
 
         console.log('\n=== Fin de l\'évaluation ===\n');
+
+        // Émettre la mise à jour des balances
+        await this.updateBalances(jupiterClient);
     }
 
     /**
      * Determines the necessity of a trade based on the current balance of two tokens and their USD values.
      * The goal is to maintain a dynamic ratio based on market conditions.
      */
-    async determineTradeNecessity(jupiterClient: JupiterClient, pair: any, token0Balance: Decimal, token1Balance: Decimal) {
+    async determineTradeNecessity(jupiterClient: JupiterClient, pair: any, token0Balance: ReturnType<typeof Decimal.prototype.constructor>, token1Balance: ReturnType<typeof Decimal.prototype.constructor>) {
         // Get dynamic rebalance percentage based on market conditions
         const dynamicRatio = await this.dynamicRebalancer.calculateDynamicRatio();
         this.rebalancePercentage = dynamicRatio;
@@ -220,7 +251,8 @@ export class MarketMaker {
         const totalPortfolioValue = token0Value.add(token1Value);
 
         const targetToken0Value = totalPortfolioValue.mul(new Decimal(this.rebalancePercentage));
-        const targetToken1Value = totalPortfolioValue.mul(new Decimal(1).sub(new Decimal(this.rebalancePercentage)));
+        const oneMinusRebalancePercentage = new Decimal(1).minus(new Decimal(this.rebalancePercentage));
+        const targetToken1Value = totalPortfolioValue.mul(oneMinusRebalancePercentage);
 
         let solAmountToTrade = new Decimal(0);
         let usdtAmountToTrade = new Decimal(0);
@@ -268,7 +300,7 @@ export class MarketMaker {
      * @param {any} token - Token object
      * @returns {Promise<Decimal>} - Token balance
      */
-    async fetchTokenBalance(jupiterClient: JupiterClient, token: { address: string; symbol: string; decimals: number; }): Promise<Decimal> {
+    async fetchTokenBalance(jupiterClient: JupiterClient, token: { address: string; symbol: string; decimals: number; }): Promise<ReturnType<typeof Decimal.prototype.constructor>> {
         const connection = jupiterClient.getConnection();
         const publicKey = jupiterClient.getUserKeypair().publicKey;
 
@@ -286,7 +318,7 @@ export class MarketMaker {
      * @param tokenMintAddress Token mint public key.
      * @returns Token balance as a Decimal.
      */
-    async getSPLTokenBalance(connection: Connection, walletAddress: PublicKey, tokenMintAddress: PublicKey): Promise<Decimal> {
+    async getSPLTokenBalance(connection: Connection, walletAddress: PublicKey, tokenMintAddress: PublicKey): Promise<ReturnType<typeof Decimal.prototype.constructor>> {
         const accounts = await connection.getParsedTokenAccountsByOwner(walletAddress, { programId: TOKEN_PROGRAM_ID });
         const accountInfo = accounts.value.find((account: any) => account.account.data.parsed.info.mint === tokenMintAddress.toBase58());
         return accountInfo ? new Decimal(accountInfo.account.data.parsed.info.tokenAmount.amount) : new Decimal(0);
@@ -298,8 +330,46 @@ export class MarketMaker {
      * @param token Token object.
      * @returns USD value of the token as a Decimal.
      */
-    async getUSDValue(jupiterClient: JupiterClient, token: any): Promise<Decimal> {
+    async getUSDValue(jupiterClient: JupiterClient, token: any): Promise<ReturnType<typeof Decimal.prototype.constructor>> {
         const quote = await jupiterClient.getQuote(token.address, this.usdcToken.address, fromNumberToLamports(1, token.decimals).toString(), this.slippageBps);
         return new Decimal(quote.outAmount).div(new Decimal(10).pow(this.usdcToken.decimals));
+    }
+
+    private async updateBalances(jupiterClient: JupiterClient) {
+        try {
+            // Mise à jour des balances
+            const solBalance = await this.fetchTokenBalance(jupiterClient, this.solToken);
+            const usdtBalance = await this.fetchTokenBalance(jupiterClient, this.usdtToken);
+
+            this.solBalance = solBalance;
+            this.usdtBalance = usdtBalance;
+
+            // Émettre la mise à jour des balances
+            const solValue = this.lastPrice ? this.solBalance.mul(this.lastPrice).toNumber() : 0;
+            const totalValue = solValue + this.usdtBalance.toNumber();
+
+            console.log('Emitting balance update:', {
+                solBalance: this.solBalance.toNumber(),
+                usdtBalance: this.usdtBalance.toNumber(),
+                portfolioValue: totalValue
+            });
+
+            marketDataService.emitMarketUpdate({
+                solBalance: this.solBalance.toNumber(),
+                usdtBalance: this.usdtBalance.toNumber(),
+                portfolioValue: totalValue
+            });
+        } catch (error) {
+            console.error('Error updating balances:', error);
+        }
+    }
+
+    private async executeTrade(side: 'buy' | 'sell', amount: ReturnType<typeof Decimal.prototype.constructor>) {
+        // ... existing trade execution code ...
+
+        // Émettre la mise à jour du dernier trade
+        marketDataService.emitMarketUpdate({
+            lastTradeTime: new Date()
+        });
     }
 }

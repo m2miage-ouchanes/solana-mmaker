@@ -3,21 +3,9 @@ import { JupiterClient } from './api/jupiter';
 import { setupSolanaConnection } from './api/solana';
 import { MarketMaker } from './strategies/basicMM';
 import { loadKeypair } from './wallet';
-import express, { Application } from 'express';
-
-const app: Application = express();
-const port = 3001; // Vous pouvez changer ce port si nécessaire
-
-// Middleware pour parser le JSON
-app.use(express.json());
 
 async function main() {
     dotenv.config();
-
-    // Démarrer le serveur
-    app.listen(port, () => {
-        console.log(`Server is running on http://localhost:${port}`);
-    });
 
     if (!process.env.SOLANA_RPC_ENDPOINT) {
         throw new Error('SOLANA_RPC_ENDPOINT is not set');
@@ -41,6 +29,5 @@ async function main() {
     const marketMaker = new MarketMaker(connection);
     await marketMaker.runMM(jupiterClient, enabled);
 }
-
 
 main().catch((err) => console.error(err))

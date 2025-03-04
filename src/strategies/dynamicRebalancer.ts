@@ -1,66 +1,147 @@
 import { Connection, PublicKey } from '@solana/web3.js';
-import { Decimal } from 'decimal.js';
-import {
-  PythConnection,
-  PriceStatus,
-  PriceData,
-  Product,
-  getPythProgramKeyForCluster
-} from '@pythnetwork/client';
+import Decimal from 'decimal.js';
+import axios from 'axios';
+import { marketDataService } from '../services/MarketDataService';
+import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
 export class DynamicRebalancer {
   private emaPeriod: number;
   private volatilityThreshold: number;
   private maxSOLExposure: number;
-  private pythOraclePubkey: PublicKey;
   private priceHistory: number[] = [];
-  private lastUpdate: number = 0;
-  private updateInterval: number = 5 * 60 * 1000; // 5 minutes
-  private pythConnection: PythConnection;
-  private readonly SOL_USD_PRICE_FEED = 'H6ARHf6YXhGYeQfUzQNGk6rDNnLBQKrenN712K4AQJBG';
+  private lastUpdate: Date = new Date();
+  private updateInterval: number = 30 * 1000; // 30 secondes
   private lastPrice: number | null = null;
+  private maxPriceHistoryLength: number = 100; // Garder les 100 derniers prix
+  private priceUpdateTimer: NodeJS.Timeout | null = null;
+  private walletAddress: PublicKey;
 
   constructor(
     private connection: Connection,
+    walletAddress: PublicKey,
     config: {
       emaPeriod?: number;
       volatilityThreshold?: number;
       maxSOLExposure?: number;
-      pythOracle?: string;
     } = {}
   ) {
     this.emaPeriod = config.emaPeriod || 20;
     this.volatilityThreshold = config.volatilityThreshold || 0.15;
     this.maxSOLExposure = config.maxSOLExposure || 0.7;
-    this.pythOraclePubkey = new PublicKey(
-      config.pythOracle || this.SOL_USD_PRICE_FEED
-    );
+    this.walletAddress = walletAddress;
 
-    // Initialize Pyth connection
-    this.pythConnection = new PythConnection(
-      connection,
-      getPythProgramKeyForCluster('mainnet-beta')
-    );
-    this.initializePythConnection();
+    this.initializePriceUpdates();
   }
 
-  private async initializePythConnection() {
+  private async initializePriceUpdates() {
     try {
-      await this.pythConnection.start();
-      console.log('Successfully connected to Pyth Network');
+      console.log('🔄 Initializing CoinGecko price updates...');
 
-      // Subscribe to price updates
-      this.pythConnection.onPriceChange((product: Product, priceData: PriceData) => {
-        if (product.priceAccountKey === this.pythOraclePubkey.toBase58() &&
-          priceData.aggregate &&
-          typeof priceData.aggregate.price === 'number') {
-          this.lastPrice = priceData.aggregate.price;
-          console.log(`SOL price update: $${this.lastPrice.toFixed(4)}`);
+      // Get initial price
+      await this.fetchSolanaPrice();
+
+      // Set up polling for price updates
+      this.priceUpdateTimer = setInterval(async () => {
+        await this.fetchSolanaPrice();
+      }, this.updateInterval);
+
+      console.log('✅ Successfully set up price update polling');
+
+    } catch (error) {
+      console.error('❌ Error initializing price updates:', error);
+      // Retry after 5 seconds
+      console.log('🔄 Scheduling price updates retry in 5 seconds...');
+      setTimeout(() => {
+        console.log('🔄 Retrying price updates initialization...');
+        this.initializePriceUpdates();
+      }, 5000);
+    }
+  }
+
+  private async fetchSolanaPrice() {
+    try {
+      const response = await axios.get('https://api.coingecko.com/api/v3/simple/price', {
+        params: {
+          ids: 'solana',
+          vs_currencies: 'usd'
         }
       });
 
+      if (response.data && response.data.solana && response.data.solana.usd) {
+        this.lastPrice = response.data.solana.usd;
+        this.updatePriceHistory();
+        console.log(`✅ SOL price update from CoinGecko: $${this.lastPrice}`);
+        this.emitPriceUpdate();
+      } else {
+        console.error('❌ Invalid price data from CoinGecko:', response.data);
+      }
     } catch (error) {
-      console.error('Error initializing Pyth connection:', error);
+      console.error('❌ Error fetching SOL price from CoinGecko:', error);
+    }
+  }
+
+  private emitPriceUpdate() {
+    if (this.lastPrice === null) return;
+
+    const ema = this.calculateEMA(this.priceHistory);
+    const volatility = this.calculateVolatility(this.priceHistory, ema);
+    const momentum = this.calculateMomentum(this.priceHistory);
+    const ratio = this.adjustRatioBasedOnMetrics(ema, volatility, momentum);
+
+    // Récupérer les balances depuis le service de marché
+    const currentMarketData = marketDataService.getCurrentMarketData();
+    const solBalance = currentMarketData?.solBalance || 0;
+    const usdtBalance = currentMarketData?.usdtBalance || 0;
+    // Garder la dernière date de transaction si elle existe
+    const lastTradeTime = currentMarketData?.lastTradeTime;
+
+    // Calculer la valeur totale du portefeuille
+    this.calculateTotalPortfolioValue()
+      .then(portfolioValue => {
+        console.log('📊 Emitting market update with data:', {
+          solPrice: this.lastPrice,
+          priceHistoryLength: this.priceHistory.length,
+          volatility,
+          momentum,
+          ratio,
+          lastTradeTime: lastTradeTime ? new Date(lastTradeTime).toISOString() : 'N/A',
+          portfolioValue,
+          solBalance,
+          usdtBalance
+        });
+
+        marketDataService.emitMarketUpdate({
+          solPrice: this.lastPrice,
+          priceHistory: [...this.priceHistory],
+          volatility: volatility,
+          momentum: momentum,
+          rebalancePercentage: ratio,
+          lastTradeTime: lastTradeTime, // Conserver la date de la dernière transaction
+          portfolioValue: portfolioValue,
+          solBalance: solBalance,
+          usdtBalance: usdtBalance
+        });
+      })
+      .catch(error => {
+        console.error('Error updating portfolio value:', error);
+      });
+  }
+
+  private updatePriceHistory(): void {
+    if (this.lastPrice !== null) {
+      // Mettre à jour la date
+      this.lastUpdate = new Date();
+
+      // Ajouter le nouveau prix
+      this.priceHistory.push(this.lastPrice);
+
+      // Garder seulement les derniers prix
+      if (this.priceHistory.length > this.maxPriceHistoryLength) {
+        this.priceHistory = this.priceHistory.slice(-this.maxPriceHistoryLength);
+      }
+
+      // Log pour le débogage
+      console.log(`Price history updated at ${this.lastUpdate.toISOString()}: ${this.priceHistory.length} prices stored`);
     }
   }
 
@@ -69,26 +150,14 @@ export class DynamicRebalancer {
     const ema = this.calculateEMA(this.priceHistory);
     const volatility = this.calculateVolatility(this.priceHistory, ema);
     const momentum = this.calculateMomentum(this.priceHistory);
+    const ratio = this.adjustRatioBasedOnMetrics(ema, volatility, momentum);
 
-    return this.adjustRatioBasedOnMetrics(ema, volatility, momentum);
-  }
+    // Émettre la mise à jour du ratio
+    marketDataService.emitMarketUpdate({
+      rebalancePercentage: ratio
+    });
 
-  private async updatePriceHistory(): Promise<void> {
-    const currentTime = Date.now();
-    if (currentTime - this.lastUpdate < this.updateInterval) {
-      return;
-    }
-
-    if (this.lastPrice !== null) {
-      this.priceHistory.push(this.lastPrice);
-
-      // Keep only the last emaPeriod prices
-      if (this.priceHistory.length > this.emaPeriod) {
-        this.priceHistory.shift();
-      }
-
-      this.lastUpdate = currentTime;
-    }
+    return ratio;
   }
 
   private calculateEMA(prices: number[]): number {
@@ -154,7 +223,7 @@ export class DynamicRebalancer {
     return this.lastPrice;
   }
 
-  private normalizePriceData(priceData: PriceData): number | null {
+  private normalizePriceData(priceData: any): number | null {
     try {
       if (priceData.aggregate && typeof priceData.aggregate.price === 'number') {
         return priceData.aggregate.price;
@@ -168,12 +237,51 @@ export class DynamicRebalancer {
 
   // Cleanup method to be called when the application shuts down
   public async cleanup() {
-    try {
-      await this.pythConnection.stop();
-      console.log('Pyth connection closed successfully');
-    } catch (error) {
-      console.error('Error closing Pyth connection:', error);
+    if (this.priceUpdateTimer) {
+      clearInterval(this.priceUpdateTimer);
+      console.log('Price update polling stopped successfully');
     }
+  }
+
+  private async calculateTotalPortfolioValue(): Promise<number> {
+    try {
+      // Récupérer le solde SOL natif
+      const solBalance = await this.connection.getBalance(this.walletAddress);
+      const solValue = (solBalance / 1e9) * (this.lastPrice || 0); // Convertir les lamports en SOL
+
+      // Récupérer le solde USDT
+      const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
+        this.walletAddress,
+        { programId: TOKEN_PROGRAM_ID }
+      );
+
+      // Chercher le compte USDT
+      const usdtAccount = tokenAccounts.value.find(account =>
+        account.account.data.parsed.info.mint === "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" // USDT
+      );
+
+      // Récupérer la valeur USDT (qui est déjà en USD)
+      const usdtValue = usdtAccount
+        ? (usdtAccount.account.data.parsed.info.tokenAmount.uiAmount || 0)
+        : 0;
+
+      const totalValue = solValue + usdtValue;
+
+      console.log('Portfolio value breakdown:', {
+        solValue: solValue.toFixed(2),
+        usdtValue: usdtValue.toFixed(2),
+        totalValue: totalValue.toFixed(2)
+      });
+
+      return totalValue;
+    } catch (error) {
+      console.error('Error calculating portfolio value:', error);
+      return 0;
+    }
+  }
+
+  private async executeTrade(side: 'buy' | 'sell', amount: ReturnType<typeof Decimal.prototype.constructor>) {
+    // ... existing trade execution code ...
   }
 }
 
