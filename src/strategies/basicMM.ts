@@ -5,6 +5,35 @@ import Decimal from 'decimal.js';
 import { fromNumberToLamports } from '../utils/convert';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { sleep } from '../utils/sleep';
+import { DynamicRebalancer } from './dynamicRebalancer';
+
+// Constantes de temps en millisecondes
+const DEFAULT_WAIT_TIME = 15 * 60 * 1000;        // 15 minutes
+const MIN_WAIT_TIME = 5 * 60 * 1000;             // 5 minutes minimum
+const MAX_WAIT_TIME = 60 * 60 * 1000;            // 1 heure maximum
+
+// Constantes de trading
+const DEFAULT_SLIPPAGE_BPS = 50;                 // 0.5% de slippage par défaut
+const DEFAULT_PRICE_TOLERANCE = 0.02;             // 2% de tolérance par défaut
+const MIN_PORTFOLIO_IMBALANCE = 0.02;            // 2% d'écart minimum pour trader
+
+// Récupération et validation de MIN_TRADE_VALUE_USD depuis les variables d'environnement
+function getMinTradeValueUSD(): number {
+    const envValue = process.env.MIN_TRADE_VALUE_USD;
+    if (!envValue) {
+        console.error('❌ Erreur: MIN_TRADE_VALUE_USD doit être défini dans les variables d\'environnement');
+        process.exit(1);
+    }
+
+    const value = parseFloat(envValue);
+    if (isNaN(value) || value <= 0) {
+        console.error(`❌ Erreur: MIN_TRADE_VALUE_USD doit être un nombre positif. Valeur reçue: ${envValue}`);
+        process.exit(1);
+    }
+
+    console.log(`✅ MIN_TRADE_VALUE_USD configuré à: $${value}`);
+    return value;
+}
 
 /**
  * Class for market making basic strategy
@@ -16,20 +45,54 @@ export class MarketMaker {
     waitTime: number
     slippageBps: number
     priceTolerance: number
+    minTradeValueUSD: number
+    minPortfolioImbalance: number
     rebalancePercentage: number
+    dynamicRebalancer: DynamicRebalancer
 
     /**
      * Initializes a new instance of the MarketMaker class with default properties.
      */
-    constructor() {
+    constructor(
+        connection: Connection,
+        config: {
+            emaPeriod?: number;
+            volatilityThreshold?: number;
+            maxSOLExposure?: number;
+            waitTime?: number;
+            slippageBps?: number;
+            priceTolerance?: number;
+            minTradeValueUSD?: number;
+            minPortfolioImbalance?: number;
+        } = {}
+    ) {
         // Read decimals from the token mint addresses
         this.usdtToken = { address: USDT_MINT_ADDRESS, symbol: 'USDT', decimals: 6 };
         this.solToken = { address: SOL_MINT_ADDRESS, symbol: 'SOL', decimals: 9 };
         this.usdcToken = { address: USDC_MINT_ADDRESS, symbol: 'USDC', decimals: 6 };
-        this.waitTime = 60000 * 60 * 6; // 6 heures
-        this.slippageBps = 50; // 0.5%
-        this.priceTolerance = 0.02; // 2%
-        this.rebalancePercentage = parseFloat(process.env.SOL_PERCENTAGE || '0.5'); // 50%
+
+        // Initialize trading parameters
+        const configuredWaitTime = config.waitTime || DEFAULT_WAIT_TIME;
+        this.waitTime = Math.min(Math.max(configuredWaitTime, MIN_WAIT_TIME), MAX_WAIT_TIME);
+        this.slippageBps = config.slippageBps || DEFAULT_SLIPPAGE_BPS;
+        this.priceTolerance = config.priceTolerance || DEFAULT_PRICE_TOLERANCE;
+        this.minTradeValueUSD = config.minTradeValueUSD || getMinTradeValueUSD();
+        this.minPortfolioImbalance = config.minPortfolioImbalance || MIN_PORTFOLIO_IMBALANCE;
+        this.rebalancePercentage = 0.5; // Valeur initiale qui sera mise à jour dynamiquement
+
+        // Log de la configuration
+        console.log('\nConfiguration du Market Maker:');
+        console.log(`- Intervalle d'évaluation: ${this.waitTime / 1000 / 60} minutes`);
+        console.log(`- Valeur minimale de trade: $${this.minTradeValueUSD}`);
+        console.log(`- Écart minimum pour trade: ${(this.minPortfolioImbalance * 100).toFixed(2)}%`);
+        console.log(`- Slippage maximum: ${(this.slippageBps / 100).toFixed(2)}%\n`);
+
+        // Initialize dynamic rebalancer with configuration
+        this.dynamicRebalancer = new DynamicRebalancer(connection, {
+            emaPeriod: config.emaPeriod || 20,
+            volatilityThreshold: config.volatilityThreshold || 0.15,
+            maxSOLExposure: config.maxSOLExposure || 0.7
+        });
     }
 
     /**
@@ -40,13 +103,15 @@ export class MarketMaker {
      */
     async runMM(jupiterClient: JupiterClient, enableTrading: Boolean = false): Promise<void> {
         const tradePairs = [{ token0: this.solToken, token1: this.usdtToken }];
+        console.log(`Stratégie démarrée avec intervalle de ${this.waitTime / 1000 / 60} minutes entre les évaluations`);
 
         while (true) {
             for (const pair of tradePairs) {
                 await this.evaluateAndExecuteTrade(jupiterClient, pair, enableTrading);
             }
 
-            console.log(`Waiting for ${this.waitTime / 1000} seconds...`);
+            const minutes = this.waitTime / 1000 / 60;
+            console.log(`\nAttente de ${minutes} minute${minutes > 1 ? 's' : ''} avant la prochaine évaluation...`);
             await sleep(this.waitTime);
         }
     }
@@ -60,57 +125,100 @@ export class MarketMaker {
      * 
      **/
     async evaluateAndExecuteTrade(jupiterClient: JupiterClient, pair: any, enableTrading: Boolean): Promise<void> {
+        console.log('\n=== Évaluation du Trade ===');
+
         const token0Balance = await this.fetchTokenBalance(jupiterClient, pair.token0); // SOL balance
         const token1Balance = await this.fetchTokenBalance(jupiterClient, pair.token1); // USDT balance
 
         // Log current token balances
-        console.log(`Token0 balance (in ${pair.token0.symbol}): ${token0Balance.toString()}`);
-        console.log(`Token1 balance (in ${pair.token1.symbol}): ${token1Balance.toString()}`);
+        console.log('\nBalances actuels:');
+        console.log(`${pair.token0.symbol}: ${token0Balance.toString()}`);
+        console.log(`${pair.token1.symbol}: ${token1Balance.toString()}`);
 
         // Get USD value for both tokens
-        const tradeNecessity = await this.determineTradeNecessity(jupiterClient, pair, token0Balance, token1Balance);
-        const { tradeNeeded, solAmountToTrade, usdtAmountToTrade } = tradeNecessity!;
-
-        if (tradeNeeded) {
-            console.log('Trade needed');
-            if (solAmountToTrade.gt(0)) {
-                console.log(`Trading ${solAmountToTrade.toString()} SOL for USDT...`);
-                const lamportsAsString = fromNumberToLamports(solAmountToTrade.toNumber(), pair.token0.decimals).toString();
-                const quote = await jupiterClient.getQuote(pair.token0.address, pair.token1.address, lamportsAsString, this.slippageBps);
-                const swapTransaction = await jupiterClient.getSwapTransaction(quote);
-                if (enableTrading) await jupiterClient.executeSwap(swapTransaction);
-                else console.log('Trading disabled');
-            } else if (usdtAmountToTrade.gt(0)) {
-                console.log(`Trading ${usdtAmountToTrade.toString()} USDT for SOL...`);
-                const lamportsAsString = fromNumberToLamports(usdtAmountToTrade.toNumber(), pair.token1.decimals).toString();
-                const quote = await jupiterClient.getQuote(pair.token1.address, pair.token0.address, lamportsAsString, this.slippageBps);
-                const swapTransaction = await jupiterClient.getSwapTransaction(quote);
-                if (enableTrading) await jupiterClient.executeSwap(swapTransaction);
-                else console.log('Trading disabled');
-            }
-        } else {
-            console.log('No trade needed');
-        }
-    }
-
-    /**
-     * Determines the necessity of a trade based on the current balance of two tokens and their USD values.
-     * The goal is to maintain a 50/50 ratio of the total USD value of each token.
-     * 
-     * @param jupiterClient An instance of JupiterClient used to fetch USD values of tokens.
-     * @param pair An object representing the token pair to be evaluated, containing `token0` and `token1` properties.
-     * @param token0Balance The current balance of `token0`.
-     * @param token1Balance The current balance of `token1`.
-     * @returns A promise that resolves to an object indicating whether a trade is needed and the amount of each token to trade.
-     */
-    async determineTradeNecessity(jupiterClient: JupiterClient, pair: any, token0Balance: Decimal, token1Balance: Decimal) {
         const token0Price = await this.getUSDValue(jupiterClient, pair.token0);
         const token1Price = await this.getUSDValue(jupiterClient, pair.token1);
 
         const token0Value = token0Balance.mul(token0Price);
         const token1Value = token1Balance.mul(token1Price);
-
         const totalPortfolioValue = token0Value.add(token1Value);
+
+        console.log('\nValeurs en USD:');
+        console.log(`${pair.token0.symbol}: $${token0Value.toString()}`);
+        console.log(`${pair.token1.symbol}: $${token1Value.toString()}`);
+        console.log(`Portfolio Total: $${totalPortfolioValue.toString()}`);
+
+        // Get dynamic rebalance percentage based on market conditions
+        const dynamicRatio = await this.dynamicRebalancer.calculateDynamicRatio();
+        this.rebalancePercentage = dynamicRatio;
+
+        console.log('\nMétriques de rebalancement:');
+        console.log(`Ratio de rebalancement actuel: ${(this.rebalancePercentage * 100).toFixed(2)}% ${pair.token0.symbol}`);
+
+        const currentRatio = token0Value.div(totalPortfolioValue);
+        console.log(`Ratio actuel du portfolio: ${(currentRatio.toNumber() * 100).toFixed(2)}% ${pair.token0.symbol}`);
+
+        const tradeNecessity = await this.determineTradeNecessity(jupiterClient, pair, token0Balance, token1Balance);
+        const { tradeNeeded, solAmountToTrade, usdtAmountToTrade } = tradeNecessity!;
+
+        if (tradeNeeded) {
+            console.log('\n🔄 Trade nécessaire:');
+            if (solAmountToTrade.gt(0)) {
+                console.log(`Vente de ${solAmountToTrade.toString()} ${pair.token0.symbol} pour ${pair.token1.symbol}`);
+                const lamportsAsString = fromNumberToLamports(solAmountToTrade.toNumber(), pair.token0.decimals).toString();
+                const quote = await jupiterClient.getQuote(pair.token0.address, pair.token1.address, lamportsAsString, this.slippageBps);
+                const swapTransaction = await jupiterClient.getSwapTransaction(quote);
+
+                console.log(`Prix estimé: ${quote.outAmount.mul(100).toFixed(2)} ${pair.token1.symbol}`);
+                console.log(`Slippage maximum: ${this.slippageBps / 100}%`);
+
+                if (enableTrading) {
+                    console.log('Exécution du trade...');
+                    await jupiterClient.executeSwap(swapTransaction);
+                    console.log('Trade exécuté avec succès');
+                } else {
+                    console.log('⚠️ Trading désactivé - Simulation uniquement');
+                }
+            } else if (usdtAmountToTrade.gt(0)) {
+                console.log(`Achat de ${pair.token0.symbol} pour ${usdtAmountToTrade.toString()} ${pair.token1.symbol}`);
+                const lamportsAsString = fromNumberToLamports(usdtAmountToTrade.toNumber(), pair.token1.decimals).toString();
+                const quote = await jupiterClient.getQuote(pair.token1.address, pair.token0.address, lamportsAsString, this.slippageBps);
+                const swapTransaction = await jupiterClient.getSwapTransaction(quote);
+
+                console.log(`Prix estimé: ${quote.outAmount.mul(100).toFixed(2)} ${pair.token0.symbol}`);
+                console.log(`Slippage maximum: ${this.slippageBps / 100}%`);
+
+                if (enableTrading) {
+                    console.log('Exécution du trade...');
+                    await jupiterClient.executeSwap(swapTransaction);
+                    console.log('Trade exécuté avec succès');
+                } else {
+                    console.log('⚠️ Trading désactivé - Simulation uniquement');
+                }
+            }
+        } else {
+            console.log('\n✅ Aucun trade nécessaire - Portfolio équilibré');
+        }
+
+        console.log('\n=== Fin de l\'évaluation ===\n');
+    }
+
+    /**
+     * Determines the necessity of a trade based on the current balance of two tokens and their USD values.
+     * The goal is to maintain a dynamic ratio based on market conditions.
+     */
+    async determineTradeNecessity(jupiterClient: JupiterClient, pair: any, token0Balance: Decimal, token1Balance: Decimal) {
+        // Get dynamic rebalance percentage based on market conditions
+        const dynamicRatio = await this.dynamicRebalancer.calculateDynamicRatio();
+        this.rebalancePercentage = dynamicRatio;
+
+        const token0Price = await this.getUSDValue(jupiterClient, pair.token0);
+        const token1Price = await this.getUSDValue(jupiterClient, pair.token1);
+
+        const token0Value = token0Balance.mul(token0Price);
+        const token1Value = token1Balance.mul(token1Price);
+        const totalPortfolioValue = token0Value.add(token1Value);
+
         const targetToken0Value = totalPortfolioValue.mul(new Decimal(this.rebalancePercentage));
         const targetToken1Value = totalPortfolioValue.mul(new Decimal(1).sub(new Decimal(this.rebalancePercentage)));
 
@@ -118,22 +226,37 @@ export class MarketMaker {
         let usdtAmountToTrade = new Decimal(0);
         let tradeNeeded = false;
 
-        console.log(`${pair.token0.symbol} value: ${token0Value.toString()}`);
-        console.log(`${pair.token1.symbol} value: ${token1Value.toString()}`);
+        // Calculer l'écart en pourcentage par rapport à la cible
+        const currentRatio = token0Value.div(totalPortfolioValue);
+        const targetRatio = new Decimal(this.rebalancePercentage);
+        const ratioDeviation = currentRatio.sub(targetRatio).abs();
 
-        if (token0Value.gt(targetToken0Value)) {
-            const valueDiff = token0Value.sub(targetToken0Value);
-            solAmountToTrade = valueDiff.div(token0Price);
-            tradeNeeded = true;
-        } else if (token1Value.gt(targetToken1Value)) {
-            const valueDiff = token1Value.sub(targetToken1Value);
-            usdtAmountToTrade = valueDiff.div(token1Price);
-            tradeNeeded = true;
-        }
-
-        const minimumTradeAmount = new Decimal(0.01);
-        if (solAmountToTrade.lt(minimumTradeAmount) && usdtAmountToTrade.lt(minimumTradeAmount)) {
-            tradeNeeded = false;
+        // Vérifier si l'écart est suffisant pour justifier un trade
+        if (ratioDeviation.gt(new Decimal(this.minPortfolioImbalance))) {
+            if (token0Value.gt(targetToken0Value)) {
+                const valueDiff = token0Value.sub(targetToken0Value);
+                // Vérifier si la valeur du trade dépasse le minimum
+                if (valueDiff.gt(new Decimal(this.minTradeValueUSD))) {
+                    solAmountToTrade = valueDiff.div(token0Price);
+                    tradeNeeded = true;
+                    console.log(`\nÉcart de portfolio: ${ratioDeviation.mul(100).toFixed(2)}%`);
+                    console.log(`Valeur du trade: $${valueDiff.toFixed(2)}`);
+                } else {
+                    console.log(`\nTrade ignoré: valeur ($${valueDiff.toFixed(2)}) inférieure au minimum ($${this.minTradeValueUSD})`);
+                }
+            } else if (token1Value.gt(targetToken1Value)) {
+                const valueDiff = token1Value.sub(targetToken1Value);
+                if (valueDiff.gt(new Decimal(this.minTradeValueUSD))) {
+                    usdtAmountToTrade = valueDiff.div(token1Price);
+                    tradeNeeded = true;
+                    console.log(`\nÉcart de portfolio: ${ratioDeviation.mul(100).toFixed(2)}%`);
+                    console.log(`Valeur du trade: $${valueDiff.toFixed(2)}`);
+                } else {
+                    console.log(`\nTrade ignoré: valeur ($${valueDiff.toFixed(2)}) inférieure au minimum ($${this.minTradeValueUSD})`);
+                }
+            }
+        } else {
+            console.log(`\nTrade ignoré: écart de ${ratioDeviation.mul(100).toFixed(2)}% inférieur au minimum ${(this.minPortfolioImbalance * 100).toFixed(2)}%`);
         }
 
         return { tradeNeeded, solAmountToTrade, usdtAmountToTrade };

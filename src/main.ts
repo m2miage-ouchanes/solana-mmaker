@@ -38,7 +38,7 @@ async function main() {
     const jupiterClient = new JupiterClient(connection, userKeypair);
 
     const enabled = process.env.ENABLE_TRADING === 'true';
-    const marketMaker = new MarketMaker();
+    const marketMaker = new MarketMaker(connection);
     await marketMaker.runMM(jupiterClient, enabled);
 }
 
