@@ -26,10 +26,10 @@ export class MarketMaker {
         this.usdtToken = { address: USDT_MINT_ADDRESS, symbol: 'USDT', decimals: 6 };
         this.solToken = { address: SOL_MINT_ADDRESS, symbol: 'SOL', decimals: 9 };
         this.usdcToken = { address: USDC_MINT_ADDRESS, symbol: 'USDC', decimals: 6 };
-        this.waitTime = 60000 * 60 * 12; // 12 heures
+        this.waitTime = 60000 * 60 * 6; // 6 heures
         this.slippageBps = 50; // 0.5%
         this.priceTolerance = 0.02; // 2%
-        this.rebalancePercentage = 0.5; // 50%
+        this.rebalancePercentage = parseFloat(process.env.SOL_PERCENTAGE || '0.5'); // 50%
     }
 
     /**
@@ -111,8 +111,8 @@ export class MarketMaker {
         const token1Value = token1Balance.mul(token1Price);
 
         const totalPortfolioValue = token0Value.add(token1Value);
-        const targetValuePerToken = totalPortfolioValue.div(new Decimal(2));
-
+        const targetToken0Value = totalPortfolioValue.mul(new Decimal(this.rebalancePercentage));
+        const targetToken1Value = totalPortfolioValue.mul(new Decimal(1).sub(new Decimal(this.rebalancePercentage)));
 
         let solAmountToTrade = new Decimal(0);
         let usdtAmountToTrade = new Decimal(0);
@@ -121,14 +121,12 @@ export class MarketMaker {
         console.log(`${pair.token0.symbol} value: ${token0Value.toString()}`);
         console.log(`${pair.token1.symbol} value: ${token1Value.toString()}`);
 
-        if (token0Value.gt(targetValuePerToken)) {
-            // If token0's value exceeds the maximum tolerated value, trade some of it for token1
-            const valueDiff = token0Value.sub(targetValuePerToken);
+        if (token0Value.gt(targetToken0Value)) {
+            const valueDiff = token0Value.sub(targetToken0Value);
             solAmountToTrade = valueDiff.div(token0Price);
             tradeNeeded = true;
-        } else if (token1Value.gt(targetValuePerToken)) {
-            // If token0's value is below the minimum tolerated value, trade some token1 for it
-            const valueDiff = token1Value.sub(targetValuePerToken);
+        } else if (token1Value.gt(targetToken1Value)) {
+            const valueDiff = token1Value.sub(targetToken1Value);
             usdtAmountToTrade = valueDiff.div(token1Price);
             tradeNeeded = true;
         }

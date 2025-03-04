@@ -28,7 +28,7 @@ export class DynamicRebalancer {
     const priceHistory = await this.fetchPriceHistory();
     const ema = this.calculateEMA(priceHistory);
     const volatility = this.calculateVolatility(priceHistory, ema);
-    
+
     return this.adjustRatioBasedOnVolatility(ema, volatility);
   }
 
@@ -45,19 +45,19 @@ export class DynamicRebalancer {
 
   private calculateEMA(prices: number[]): number {
     const multiplier = 2 / (this.emaPeriod + 1);
-    return prices.reduce((ema, price) => 
+    return prices.reduce((ema, price) =>
       (price - ema) * multiplier + ema, prices[0]);
   }
 
   private calculateVolatility(prices: number[], ema: number): number {
-    const squaredDiffs = prices.map(p => Math.pow((p - ema)/ema, 2));
+    const squaredDiffs = prices.map(p => Math.pow((p - ema) / ema, 2));
     return Math.sqrt(squaredDiffs.reduce((a, b) => a + b) / prices.length);
   }
 
-  private adjustRatioBasedOnVolatility(ema: number, volatility: number): number {
+  /*private adjustRatioBasedOnVolatility(ema: number, volatility: number): number {
     const baseRatio = 0.5;
     const trendStrength = (this.getCurrentSOLPrice() - ema) / ema;
-    
+
     let adjustedRatio = baseRatio;
     if (volatility < this.volatilityThreshold) {
       adjustedRatio += (this.volatilityThreshold - volatility) * trendStrength * 2;
@@ -69,5 +69,5 @@ export class DynamicRebalancer {
       1 - this.maxSOLExposure,
       Math.min(this.maxSOLExposure, adjustedRatio)
     );
-  }
+  }*/
 }
