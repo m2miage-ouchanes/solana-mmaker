@@ -1,0 +1,27 @@
+[33m0d1fedc[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdev[m[33m, [m[1;31morigin/dev[m[33m)[m fix setup socket in render
+[33md08fdd9[m fix package
+[33mf80ca3d[m fix production
+[33m988906f[m package
+[33ma3aec49[m package
+[33m172e101[m fix : port
+[33m92427fa[m fix package
+[33m7d57949[m add dashboard
+[33m24f02d9[m feat/dynamicRebalancer
+[33mf14951f[m feat: implement dynamic portfolio balance ratio using environment variable
+[33me49fb76[m dynamic rebalancer non terminé
+[33m2c9113e[m usdt
+[33m91066ae[m express
+[33m82b573a[m express
+[33m2b94282[m dev
+[33m4aaba68[m dev
+[33mdfd5229[m[33m ([m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmaster[m[33m)[m Merge pull request #1 from m2miage-ouchanes/fix/transactions-tiemeout
+[33m342356f[m[33m ([m[1;31morigin/fix/transactions-tiemeout[m[33m, [m[1;32mfix/transactions-tiemeout[m[33m)[m feat/add-priority-fees
+[33m0bf029a[m fix/improve-swap-execution-and-confirmation
+[33mde225b9[m Merge pull request #2 from gianlucamazza/wallet_from_mnemonic
+[33mde98106[m wip
+[33mbe60a13[m wip
+[33m472873e[m wip
+[33ma366784[m fixed README
+[33mf4d410b[m cleanup types
+[33mc69667d[m added types
+[33m6d6a75c[m first upload
