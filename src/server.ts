@@ -5,7 +5,9 @@ import cors from 'cors';
 import path from 'path';
 
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: process.env.NODE_ENV === 'production' ? '*' : 'http://localhost:3000'
+}));
 
 // Servir les fichiers statiques du build React
 app.use(express.static(path.join(__dirname, '../build')));
@@ -13,13 +15,12 @@ app.use(express.static(path.join(__dirname, '../build')));
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
-        origin: process.env.NODE_ENV === 'production'
-            ? true  // Accepter toutes les origines en production
-            : "http://localhost:3000",
+        origin: process.env.NODE_ENV === 'production' ? '*' : 'http://localhost:3000',
         methods: ["GET", "POST"]
     },
     pingTimeout: 60000,
-    pingInterval: 25000
+    pingInterval: 25000,
+    transports: ['websocket', 'polling']
 });
 
 io.on('connection', (socket) => {

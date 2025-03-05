@@ -34,9 +34,15 @@ class MarketDataService {
     }
 
     private getSocketURL(): string {
-        // En production, utiliser l'URL de l'application
+        // En production, utiliser l'URL de Render
         if (process.env.NODE_ENV === 'production') {
-            return '/';  // L'URL relative fonctionnera car le serveur sert aussi les fichiers statiques
+            const renderUrl = process.env.RENDER_EXTERNAL_URL;
+            if (!renderUrl) {
+                console.warn('⚠️ RENDER_EXTERNAL_URL not set, falling back to relative URL');
+                return '/';
+            }
+            console.log('📡 Connecting to WebSocket server at:', renderUrl);
+            return renderUrl;
         }
         // En développement, utiliser localhost
         return 'http://localhost:3001';
@@ -49,12 +55,14 @@ class MarketDataService {
                 this.socket = null;
             }
 
-            console.log('Setting up WebSocket connection...');
-            this.socket = io(this.getSocketURL(), {
+            const socketUrl = this.getSocketURL();
+            console.log('Setting up WebSocket connection to:', socketUrl);
+            this.socket = io(socketUrl, {
                 reconnection: true,
                 reconnectionAttempts: this.maxReconnectAttempts,
                 reconnectionDelay: this.reconnectDelay,
-                timeout: 10000
+                timeout: 10000,
+                transports: ['websocket', 'polling']  // Essayer d'abord WebSocket, puis fallback sur polling
             });
 
             this.socket.on('connect', () => {
