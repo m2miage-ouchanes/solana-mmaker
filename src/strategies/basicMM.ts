@@ -189,7 +189,7 @@ export class MarketMaker {
                 const quote = await jupiterClient.getQuote(pair.token0.address, pair.token1.address, lamportsAsString, this.slippageBps);
                 const swapTransaction = await jupiterClient.getSwapTransaction(quote);
 
-                console.log(`Prix estimé: ${quote.outAmount.mul(100).toFixed(2)} ${pair.token1.symbol}`);
+                console.log(`Prix estimé: ${new Decimal(quote.outAmount).div(new Decimal(10).pow(pair.token1.decimals)).toFixed(2)} ${pair.token1.symbol}`);
                 console.log(`Slippage maximum: ${this.slippageBps / 100}%`);
 
                 if (enableTrading) {
@@ -209,7 +209,7 @@ export class MarketMaker {
                 const quote = await jupiterClient.getQuote(pair.token1.address, pair.token0.address, lamportsAsString, this.slippageBps);
                 const swapTransaction = await jupiterClient.getSwapTransaction(quote);
 
-                console.log(`Prix estimé: ${quote.outAmount.mul(100).toFixed(2)} ${pair.token0.symbol}`);
+                console.log(`Prix estimé: ${new Decimal(quote.outAmount).div(new Decimal(10).pow(pair.token0.decimals)).toFixed(2)} ${pair.token0.symbol}`);
                 console.log(`Slippage maximum: ${this.slippageBps / 100}%`);
 
                 if (enableTrading) {

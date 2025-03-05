@@ -5,10 +5,10 @@ import Decimal from 'decimal.js';
  * Converts a readable number of tokens to the smallest unit (e.g., lamports for SOL).
  * @param {number} value - The amount in readable units.
  * @param {number} decimals - The number of decimals the token uses.
- * @returns {string} - The amount in lamports.
+ * @returns {string} - The amount in lamports as an integer string.
  */
 export function fromNumberToLamports(value: number, decimals: number): string {
-    return new Decimal(value).times(new Decimal(10).pow(decimals)).toString();
+    return new Decimal(value).times(new Decimal(10).pow(decimals)).toFixed(0);
 }
 
 /**

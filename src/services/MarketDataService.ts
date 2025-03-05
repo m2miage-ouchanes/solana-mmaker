@@ -33,6 +33,15 @@ class MarketDataService {
         return MarketDataService.instance;
     }
 
+    private getSocketURL(): string {
+        // En production, utiliser l'URL de l'application
+        if (process.env.NODE_ENV === 'production') {
+            return '/';  // L'URL relative fonctionnera car le serveur sert aussi les fichiers statiques
+        }
+        // En développement, utiliser localhost
+        return 'http://localhost:3001';
+    }
+
     private initializeSocket() {
         try {
             if (this.socket) {
@@ -41,7 +50,7 @@ class MarketDataService {
             }
 
             console.log('Setting up WebSocket connection...');
-            this.socket = io('http://localhost:3001', {
+            this.socket = io(this.getSocketURL(), {
                 reconnection: true,
                 reconnectionAttempts: this.maxReconnectAttempts,
                 reconnectionDelay: this.reconnectDelay,
